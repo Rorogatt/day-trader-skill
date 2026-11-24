@@ -1,2 +1,6 @@
 # Runtime data and personal config written by the skills
 trader/
+
+# Python bytecode cache
+__pycache__/
+*.pyc

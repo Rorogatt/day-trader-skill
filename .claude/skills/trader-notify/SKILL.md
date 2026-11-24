@@ -35,9 +35,9 @@ python3 "${CLAUDE_SKILL_DIR}/notify.py" send "text" --dry-run        # show, sen
 | --- | --- | --- |
 | WhatsApp | `notify.py`, CallMeBot's free API, to the user's own number | `CALLMEBOT_PHONE` (+33...) and `CALLMEBOT_APIKEY` as environment variables |
 | Telegram | `notify.py`, the user's bot (the one tradepilot uses) | `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` |
-| Google Drive | the Google Drive connector: one Google Doc per run in the folder named in `trader/notify.json` (`drive_folder`, default "Day Trader") | the connector is attached to the scheduled task |
-| E-mail | the scheduled task's e-mail summary, or the Gmail connector sending to the user's own address | nothing more |
-| Phone push | the scheduled task's push notification (Claude app) | nothing more |
+| Google Drive | the Google Drive connector: one Google Doc per run in the "Day Trader" folder (id `1IDmSxTMUCUqw_SHc709QpUPmBm7VBUtJ`) | the session's Google Drive connector |
+| E-mail | the Gmail connector, to the user's own address only | the session's Gmail connector |
+| Phone push | PushNotification (Claude app), only when a decision is needed | nothing more |
 
 Getting a CallMeBot key: follow https://www.callmebot.com/blog/free-api-whatsapp-messages/
 (add the number it gives to the phone's contacts, send it "I allow callmebot to
@@ -69,8 +69,8 @@ up; that is not an error for the rest of the run.
 ## Drive report
 
 One Google Doc per run, titled `YYYY-MM-DD HH:MM ET - <agent>` in the
-`drive_folder` folder (create the folder once if it is missing, then reuse its
-id, stored in `trader/notify.json` as `drive_folder_id`). Body: the same summary
+"Day Trader" folder (search it by name if the id above is gone; create it only
+if it is missing). Body: the same summary
 as the notification, then the full tool output (scanner hits, news items with
 links, plans, Time Machine odds, risk verdicts). Search for the folder by name
 before creating it so there is only ever one.

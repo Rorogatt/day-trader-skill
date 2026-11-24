@@ -28,8 +28,10 @@ skill, four agents in `.claude/agents/`, and the user's own bot **tradepilot**
 1. **Set up.** `mkdir -p trader && [ -f trader/config.json ] || cp trader-budget/config.example.json trader/config.json`.
    If `SEC_USER_AGENT` is set in the environment the tools use it; never invent one.
 2. **Restore memory from Drive.** With the Google Drive connector, find the
-   folder "Day Trader" (create it if missing) and in it the file
-   `day-trader-state.json`; download it to `trader/state-in.json` and run
+   folder "Day Trader" (id `1IDmSxTMUCUqw_SHc709QpUPmBm7VBUtJ`; search by name
+   if that id is gone) and in it the NEWEST file titled `day-trader-state.json`
+   (`search_files` with `parentId`, ordered `modifiedTime desc`); download it
+   to `trader/state-in.json` and run
    `python3 .claude/skills/trader-notify/statepack.py unpack --file trader/state-in.json`.
    No connector or no file: carry on with an empty memory and say so in the report.
 3. **Check the clock.** `python3 trader-alerts/alerts.py clock`. A market
@@ -40,12 +42,18 @@ skill, four agents in `.claude/agents/`, and the user's own bot **tradepilot**
 5. **Report.** A Google Doc in "Day Trader" titled `YYYY-MM-DD HH:MM ET - <agent>`
    with the summary then the full tool output and links. Then, only if there
    is something new, `python3 .claude/skills/trader-notify/notify.py send --title "<agent>" --key <event-date> "<summary>"`.
-   Your final message is the summary in French (it becomes the push
-   notification and the e-mail of the scheduled task): what needs a decision
+   When the session has the Gmail connector, e-mail the same summary to the
+   user's own address (subject `Day Trader - <agent> - YYYY-MM-DD HH:MM ET`,
+   with the link to the Drive report) and, if something needs a decision,
+   send a one-line push notification (PushNotification). Nothing new: no
+   e-mail, no push.
+   Your final message is the summary in French: what needs a decision
    first, then what changed, under 1,200 characters, ending "Pas un conseil financier."
-6. **Save memory.** `python3 .claude/skills/trader-notify/statepack.py pack --file trader/state-out.json`
-   and upload it over `day-trader-state.json` in the Drive folder (update the
-   existing file, never create a second one).
+6. **Save memory.** `python3 .claude/skills/trader-notify/statepack.py pack --file trader/state-out.json`,
+   upload it to the folder as a new `day-trader-state.json` (`create_file`,
+   `contentMimeType` application/json, `disableConversionToGoogleType` true:
+   the connector cannot rewrite a file's content), then move the older
+   `day-trader-state.json` files to the trash so only the newest remains.
 
 ## Hard rules
 

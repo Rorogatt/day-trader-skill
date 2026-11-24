@@ -15,12 +15,13 @@ Write to the user in French. You prepare trades; you never place one.
 2. Scan: `python3 trader-scanner/scan.py orb` (on the morning's watchlist if
    `trader/watchlist.json` is from today, else the whole universe).
 3. Take the 3 strongest breakouts (most traded first). For each:
-   - `python3 trader-entry/entry.py check <T> --setup orb`. Only `triggered`
-     goes on.
+   - `python3 trader-entry/entry.py check <T> --setup orb --write` (the
+     `--write` saves `trader/entry.json` for the exit planner). Only `TRIGGERED`
+     goes on; a trigger more than 30 minutes old is a late entry: say so.
    - `python3 trader-news/news.py --tickers <T> --hours 18`: a `!` filing,
      earnings today or a halt rules it out; say why.
    - `python3 trader-exit/exit.py plan --stop or-mid --target 2R --write`
-     (read the skill for its inputs; the plan goes to `trader/plan.json`).
+     (reads `trader/entry.json`; the plan goes to `trader/plan.json`).
    - `python3 trader-timemachine/timemachine.py run --write` and keep the odds
      (target first, stop first, neither) and the historical count.
    - `python3 trader-budget/size.py --write` then `python3 trader-risk/check.py`.

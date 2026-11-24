@@ -39,7 +39,11 @@ class Repo(unittest.TestCase):
         self.assertEqual(found, sorted(SKILLS))
 
     def test_root_matches_the_reel(self):
-        root = sorted(d for d in os.listdir(ROOT) if not d.startswith(".git"))
+        # .claude holds this checkout's own Claude Code setup (agents, the notify skill,
+        # links to the eleven) and trader/ is the git-ignored folder the skills write to
+        # when run here; neither is part of the published pack
+        root = sorted(d for d in os.listdir(ROOT)
+                      if not d.startswith(".git") and d not in (".claude", "trader"))
         self.assertEqual(root, sorted([".claude-plugin", "LICENSE", "README.md", "tests"] + SKILLS))
 
     def test_frontmatter_name_and_description(self):

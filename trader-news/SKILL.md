@@ -2,7 +2,9 @@
 name: trader-news
 description: >-
   News Monitor. Tracks breaking news on every stock you watch and flags what
-  moves it: Yahoo Finance headlines per ticker, each company's 8-K filings on
+  moves it: Yahoo Finance and Google News headlines per ticker (Reuters, Seeking
+  Alpha, IBD and every outlet Google indexes), market-wide feeds (MarketWatch,
+  Federal Reserve and SEC press releases), each company's 8-K filings on
   SEC EDGAR (earnings, CEO changes, deals, restatements, bankruptcy) and how
   far each stock is from yesterday's close. Shows only what is new since the
   last check, newest first, in New York time, tags each item (earnings,
@@ -27,6 +29,8 @@ Tool in this folder (standard library Python, no keys):
 python3 "${CLAUDE_SKILL_DIR}/news.py"                         # watchlist + plan + portfolio
 python3 "${CLAUDE_SKILL_DIR}/news.py" --tickers TSLA NVDA --hours 12
 python3 "${CLAUDE_SKILL_DIR}/news.py" --no-sec --json
+python3 "${CLAUDE_SKILL_DIR}/news.py" --market                # + MarketWatch, the Fed, SEC press
+python3 "${CLAUDE_SKILL_DIR}/news.py" --sources yahoo         # one headline feed only
 ```
 
 ## What it reads and writes
@@ -37,6 +41,8 @@ python3 "${CLAUDE_SKILL_DIR}/news.py" --no-sec --json
 | `trader/plan.json` | the trade you are planning (trader-exit) |
 | `trader/portfolio.json` | what you hold (trader-broker records fills there) |
 | Yahoo Finance headline RSS | `https://feeds.finance.yahoo.com/rss/2.0/headline?s=TSLA&region=US&lang=en-US` |
+| Google News search RSS | `https://news.google.com/rss/search?q=TSLA+stock+when:2d`: each item is credited to its outlet (Reuters, Yahoo Finance, IBD...), the " - Outlet" suffix removed |
+| `--market`: MarketWatch, Federal Reserve, SEC | top stories and Market Pulse, Fed press releases (FOMC statements and minutes), SEC press releases (needs the SEC User-Agent); items that name none of your tickers show as `MARKET` |
 | Yahoo Finance chart endpoint | the last price against yesterday's close (unofficial, can lag) |
 | SEC EDGAR company Atom feed | 8-K by default (`--forms 8-K,10-Q` for more); needs `sec_user_agent` in `trader/config.json` or `SEC_USER_AGENT`, else filings are skipped with a note |
 | `trader/state/news.json` | what has been shown (kept 30 days) and each ticker's CIK |

@@ -25,13 +25,21 @@ Sources, one request each per ticker:
     trader/config.json or SEC_USER_AGENT). Without one the SEC part is skipped
     and the tool says so; headlines still run.
 
+  - Google News search RSS (every outlet Google indexes; the publisher is kept):
+    https://news.google.com/rss/search?q=<TICKER>+stock+when:2d&hl=en-US&gl=US&ceid=US:en
+    (--sources yahoo,google picks which headline feeds run; both by default.)
+  - With --market, market-wide feeds once per check: MarketWatch top stories
+    and Market Pulse, Federal Reserve press releases, and SEC press releases
+    (the last one only with a SEC User-Agent).
+
   - The move: Yahoo Finance's chart endpoint (unofficial, can lag), the last
     price against yesterday's close:
     https://query2.finance.yahoo.com/v8/finance/chart/<TICKER>?range=1d&interval=5m
 
 Times print in New York time (ET). State: trader/state/news.json remembers
 what you have seen (30 days), so an item shows once. Offline: --offline DIR
-reads yahoo-<TICKER>.xml, chart-<TICKER>.json, sec-<FORM>-<CIK>.xml and
+reads yahoo-<TICKER>.xml, google-<TICKER>.xml, market-<NAME>.xml,
+, chart-<TICKER>.json, sec-<FORM>-<CIK>.xml and
 company_tickers.json from DIR. The tests use it.
 
 Headlines are leads, not facts: open the story before acting, and treat
@@ -43,16 +51,27 @@ import datetime as _dt
 import email.utils
 import gzip
 import hashlib
+import html
 import json
 import os
 import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
 YAHOO = "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%s&region=US&lang=en-US"
+GOOGLE = "https://news.google.com/rss/search?q=%s&hl=en-US&gl=US&ceid=US:en"
+HEADLINE_SOURCES = ("yahoo", "google")
+# (name, label, url, needs the SEC User-Agent)
+MARKET_FEEDS = [
+    ("marketwatch", "MarketWatch", "https://feeds.content.dowjones.io/public/rss/mw_topstories", False),
+    ("marketpulse", "MarketWatch", "https://feeds.content.dowjones.io/public/rss/mw_marketpulse", False),
+    ("fed", "Federal Reserve", "https://www.federalreserve.gov/feeds/press_all.xml", False),
+    ("secpress", "SEC", "https://www.sec.gov/news/pressreleases.rss", True),
+]
 CHART = "https://%s.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=5m"
 SEC_FEED = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=%s&type=%s"
             "&dateb=&owner=include&count=%d&output=atom")
@@ -189,6 +208,8 @@ class Fetcher(object):
             raise NewsError("HTTP %s for %s" % (exc.code, url))
         except urllib.error.URLError as exc:
             raise NewsError("could not reach %s: %s" % (url, exc.reason))
+        except (OSError, ValueError) as exc:  # timeouts, resets, a bad gzip body
+            raise NewsError("could not read %s: %s" % (url, type(exc).__name__))
 
 
 def yahoo_symbol(ticker):
@@ -238,21 +259,48 @@ def parse_time(value):
     return d.astimezone(_dt.timezone.utc)
 
 
-def parse_rss(data, ticker):
-    """Yahoo headline RSS -> items."""
+_HTML = re.compile(r"<[^>]+>")
+
+
+def parse_rss(data, ticker, source="Yahoo Finance", prefix="rss", kind="headline"):
+    """Headline RSS (Yahoo, market feeds) -> items."""
     try:
         root = ET.fromstring(data)
     except ET.ParseError as exc:
-        raise NewsError("RSS for %s is not valid XML: %s" % (ticker, exc))
+        raise NewsError("RSS for %s is not valid XML: %s" % (ticker or source, exc))
     out = []
     for it in root.iter("item"):
         title = _text(it, "title")
         link = _text(it, "link")
         guid = _text(it, "guid") or link
-        out.append({"id": "rss:" + guid, "source": "Yahoo Finance", "kind": "headline",
-                    "ticker": ticker, "title": title, "summary": _text(it, "description"),
+        summary = _text(it, "description")
+        if prefix != "rss":  # Yahoo's items stay as they were; others lose HTML and entities
+            title = html.unescape(title)
+            summary = html.unescape(re.sub(r"\s+", " ", _HTML.sub(" ", summary))).strip()[:600]
+        out.append({"id": prefix + ":" + guid, "source": source, "kind": kind,
+                    "ticker": ticker, "title": title, "summary": summary,
                     "link": link, "time": parse_time(_text(it, "pubDate"))})
     return out
+
+
+def parse_google(data, ticker):
+    """Google News search RSS -> items, credited to the outlet, not to Google."""
+    items = parse_rss(data, ticker, source="Google News", prefix="gnews")
+    root = ET.fromstring(data)  # parse_rss already proved it is valid XML
+    outlets = [_text(it, "source") for it in root.iter("item")]
+    for item, outlet in zip(items, outlets):
+        if outlet:
+            item["source"] = outlet
+            suffix = " - " + outlet
+            if item["title"].endswith(suffix):
+                item["title"] = item["title"][: -len(suffix)].rstrip()
+        item["summary"] = ""  # Google repeats the title as a link list
+    return items
+
+
+def google_query(ticker, name=None):
+    q = '"%s" OR %s stock when:2d' % (name, ticker) if name else "%s stock when:2d" % ticker
+    return GOOGLE % urllib.parse.quote_plus(q)
 
 
 def parse_sec_atom(data, ticker):
@@ -378,14 +426,45 @@ def fingerprint(it):
 
 # ---------------------------------------------------------------- the check
 
-def collect(fetcher, watch, state, sec=True, forms=("8-K",), count=10, errors=None):
+def _missing_offline(fetcher, exc):
+    return bool(fetcher.offline) and "no file" in str(exc)
+
+
+def collect_market(fetcher, sec=True, errors=None):
+    """Market-wide feeds (MarketWatch, the Fed, SEC press releases), once per check."""
+    errors = [] if errors is None else errors
+    items = []
+    for name, label, url, needs_sec in MARKET_FEEDS:
+        if needs_sec and not sec:
+            continue
+        try:
+            data = fetcher.get(url, "market-%s.xml" % name, sec=needs_sec)
+            items += parse_rss(data, "", source=label, prefix="mkt-" + name, kind="market")
+        except NewsError as exc:
+            if not _missing_offline(fetcher, exc):
+                errors.append("%s feed: %s" % (label, exc))
+    return items
+
+
+def collect(fetcher, watch, state, sec=True, forms=("8-K",), count=10, errors=None,
+            sources=HEADLINE_SOURCES, market=False):
     errors = [] if errors is None else errors
     items = []
     for t in sorted(watch):
-        try:
-            items += parse_rss(fetcher.get(YAHOO % yahoo_symbol(t), "yahoo-%s.xml" % t), t)
-        except NewsError as exc:
-            errors.append("headlines for %s: %s" % (t, exc))
+        if "yahoo" in sources:
+            try:
+                items += parse_rss(fetcher.get(YAHOO % yahoo_symbol(t), "yahoo-%s.xml" % t), t)
+            except NewsError as exc:
+                errors.append("headlines for %s: %s" % (t, exc))
+        if "google" in sources:
+            try:
+                items += parse_google(fetcher.get(google_query(t, watch.get(t)),
+                                                  "google-%s.xml" % t), t)
+            except NewsError as exc:
+                if not _missing_offline(fetcher, exc):
+                    errors.append("Google News for %s: %s" % (t, exc))
+    if market:
+        items += collect_market(fetcher, sec=sec, errors=errors)
     if sec:
         try:
             ciks = cik_map(fetcher, state)
@@ -455,7 +534,7 @@ def render(items, errors, now, moves=None, move_pct=MOVE_PCT):
     for it in items:
         when = to_eastern(it["time"]).strftime("%Y-%m-%d %H:%M ET") if it["time"] else "time unknown"
         mark = "!" if it.get("important") else " "
-        who = ",".join(it["touches"]) or it["ticker"]
+        who = ",".join(it["touches"]) or it["ticker"] or "MARKET"
         out.append("%s %s  %-11s %-13s %s" % (mark, when, who, it["source"], it["title"]))
         extra = []
         if it["tags"]:
@@ -489,6 +568,10 @@ def main(argv=None):
     ap.add_argument("--all", action="store_true", help="show seen items too")
     ap.add_argument("--forms", default="8-K", help="SEC forms to watch, comma separated")
     ap.add_argument("--no-sec", action="store_true", help="headlines only")
+    ap.add_argument("--sources", default=",".join(HEADLINE_SOURCES),
+                    help="headline feeds per ticker, comma separated: yahoo,google")
+    ap.add_argument("--market", action="store_true",
+                    help="also read market-wide feeds: MarketWatch, the Fed, SEC press releases")
     ap.add_argument("--no-moves", action="store_true", help="skip the price line per ticker")
     ap.add_argument("--move-pct", type=float, default=MOVE_PCT, help="flag a move this big (percent)")
     ap.add_argument("--user-agent", help="SEC User-Agent: \"Your Name you@example.com\"")
@@ -505,7 +588,7 @@ def main(argv=None):
         watch.update({t: known[t] for t in watch if known.get(t)})
     else:
         watch = watch_from_files(args.portfolio, args.watchlist, args.plan)
-    if not watch:
+    if not watch and not args.market:
         print("news: no tickers. Pass --tickers, or run /trader-scanner first (it writes "
               "trader/watchlist.json).", file=sys.stderr)
         return 2
@@ -520,7 +603,14 @@ def main(argv=None):
         sec = False
     fetcher = Fetcher(ua, offline=args.offline)
     forms = [f.strip().upper() for f in args.forms.split(",") if f.strip()]
-    items = collect(fetcher, watch, state, sec=sec, forms=forms, errors=errors)
+    sources = [x.strip().lower() for x in args.sources.split(",") if x.strip()]
+    unknown = [x for x in sources if x not in HEADLINE_SOURCES]
+    if unknown:
+        print("news: unknown source %s (choose from %s)" % (", ".join(unknown),
+              ", ".join(HEADLINE_SOURCES)), file=sys.stderr)
+        return 2
+    items = collect(fetcher, watch, state, sec=sec, forms=forms, errors=errors,
+                    sources=sources, market=args.market)
     items = dedupe(tag(items, watch))
     shown = select(items, state, now, hours=args.hours, show_all=args.all)
     moves = [] if args.no_moves else collect_moves(fetcher, watch, errors)
